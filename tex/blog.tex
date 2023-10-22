@@ -1,0 +1,169 @@
+%This file is just a wrapper. Please, edit the files for your chapter in chapters/chapter1/.
+%Don't worry, we will put your chapter in the correct place when assemble the book.
+
+\documentclass[8pt,a4paper]{book}
+\usepackage{classicthesis}
+\usepackage[T1]{fontenc}
+\usepackage{newpxtext,newpxmath}
+%\usepackage{fontspec}
+\usepackage{fontawesome}
+\usepackage{fixltx2e,fix-cm}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{listings,inconsolata}
+\usepackage{fbb}
+
+
+\usepackage{xcolor}
+\definecolor{commentgreen}{RGB}{2,112,10}
+\definecolor{eminence}{RGB}{108,48,130}
+\definecolor{weborange}{RGB}{255,165,0}
+\definecolor{frenchplum}{RGB}{129,20,83}
+
+\usepackage{amsmath}  % for \hookrightarrow
+\lstset{
+ language=caml,
+ columns=[c]fixed,
+ basicstyle=\small\ttfamily,
+ keywordstyle=\bfseries,
+ upquote=true,
+ commentstyle=,
+ breaklines=true,
+  postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
+ showstringspaces=false,
+    commentstyle=\color{commentgreen},
+    keywordstyle=\color{eminence},
+    stringstyle=\color{red},
+ stringstyle=\color{blue},
+emphstyle={\color{blue}},
+    keywordstyle=\color{weborange},
+ literate={'"'}{\textquotesingle "\textquotesingle}3,
+numbers=left,
+    numberstyle=\footnotesize,
+frame=single,
+    xleftmargin=5pt,
+    xrightmargin=3pt,
+    aboveskip = 20pt,
+    rulecolor=\color{black}
+}
+\makeatletter
+\lstdefinelanguage{llvm}{
+  morecomment = [l]{;},
+  morestring=[b]", 
+  sensitive = true,
+  classoffset=0,
+  morekeywords={
+    define, declare, global, constant,
+    internal, external, private,
+    linkonce, linkonce_odr, weak, weak_odr, appending,
+    common, extern_weak,
+    thread_local, dllimport, dllexport,
+    hidden, protected, default,
+    except, deplibs,
+    volatile, fastcc, coldcc, cc, ccc,
+    x86_stdcallcc, x86_fastcallcc,
+    ptx_kernel, ptx_device,
+    signext, zeroext, inreg, sret, nounwind, noreturn,
+    nocapture, byval, nest, readnone, readonly, noalias, uwtable,
+    inlinehint, noinline, alwaysinline, optsize, ssp, sspreq,
+    noredzone, noimplicitfloat, naked, alignstack,
+    module, asm, align, tail, to,
+    addrspace, section, alias, sideeffect, c, gc,
+    target, datalayout, triple,
+    blockaddress
+  },
+  classoffset=1, keywordstyle=\color{purple},
+  morekeywords={
+    fadd, sub, fsub, mul, fmul,
+    sdiv, udiv, fdiv, srem, urem, frem,
+    and, or, xor,
+    icmp, fcmp,
+    eq, ne, ugt, uge, ult, ule, sgt, sge, slt, sle,
+    oeq, ogt, oge, olt, ole, one, ord, ueq, ugt, uge,
+    ult, ule, une, uno,
+    nuw, nsw, exact, inbounds,
+    phi, call, select, shl, lshr, ashr, va_arg,
+    trunc, zext, sext,
+    fptrunc, fpext, fptoui, fptosi, uitofp, sitofp,
+    ptrtoint, inttoptr, bitcast,
+    ret, br, indirectbr, switch, invoke, unwind, unreachable,
+    malloc, alloca, free, load, store, getelementptr,
+    extractelement, insertelement, shufflevector,
+    extractvalue, insertvalue,
+  },
+  alsoletter={\%},
+  keywordsprefix={\%},
+}
+\makeatother
+\usepackage{subfigure}
+\usepackage{makeidx}
+\usepackage{multicol}
+\usepackage[pdfstartview=FitH]{hyperref}
+%\usepackage{bookmark}
+%\usepackage[dvips]{hyperref}
+%% Pandoc tightlist
+
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\usepackage{relsize}
+\frenchspacing
+\tolerance=5000
+
+\makeindex
+\newcommand{\ignoresecond}[2]{#1}
+%\include{frontmatter/preamble} %place custom commands and macros here
+
+\begin{document}
+
+\frontmatter
+
+\title{Creating the Bolt Compiler
+%in Socio-Environmental Systems, Public Health, and Insurance\\
+%{\Large(Applied Environmental Statistics Series)}
+}
+\author{Mukul Rathi}
+
+\maketitle
+
+%\include{frontmatter/dedication}
+\cleardoublepage
+%\setcounter{page}{7} %previous pages will be reserved for frontmatter to be added in later.
+\tableofcontents
+%\include{frontmatter/foreword}
+%\include{frontmatter/preface}
+%\listoffigures
+%\listoftables
+%\include{frontmatter/contributor}
+%\include{frontmatter/symbollist}
+
+\mainmatter
+
+\part{Introduction}
+\include{01}
+\include{02}
+%\include{chapters/chapter2/ch2}
+
+\part{OCaml Semantic Front End}
+\include{03}
+\include{04}
+\include{05}
+\include{06}
+\include{07}
+
+
+\part{C++ and LLVM/IR Back End}
+\include{08}
+\include{09}
+\include{10}
+\include{11}
+
+
+
+
+%\bibliographystyle{plain}
+%\bibliography{bibtex_example}
+
+%\printindex
+
+\end{document}

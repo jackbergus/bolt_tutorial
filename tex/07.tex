@@ -1,0 +1,970 @@
+%\hypertarget{___gatsby}{}
+%\hypertarget{gatsby-focus-wrapper}{}
+%\href{https://mukulrathi.com/}{}
+%
+%MUKUL RATHI
+%
+%\href{https://mukulrathi.com/about-me}{}
+%
+%About Me
+%
+%\href{https://mukulrathi.com/blog}{}
+%
+%Blog
+%
+%\hypertarget{creating-the-bolt-compiler-part-7}{%
+%\section{Creating the Bolt Compiler: Part
+%7}\label{creating-the-bolt-compiler-part-7}}
+
+\hypertarget{top-of-page}{%
+\chapter{A Protobuf tutorial for OCaml and C++}\label{top-of-page}}
+
+October 03, 2020
+
+\includegraphics[width=\linewidth]{07_files/protobuf.png}
+
+%\hypertarget{october-03-2020}{%
+%\section{October 03, 2020}\label{october-03-2020}}
+%
+%\hypertarget{min-read}{%
+%\section{8 min read}\label{min-read}}
+%
+%\includegraphics[width=6.5625in,height=2.45833in]{07_files/protobuf_002.png}
+%
+%\hypertarget{series-creating-the-bolt-compiler}{%
+%\section{Series: Creating the Bolt
+%Compiler}\label{series-creating-the-bolt-compiler}}
+%
+%\begin{itemize}
+%\item
+%  { Part 1:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/intro-to-compiler/}{How
+%  I wrote my own "proper" programming language}
+%\item
+%  { Part 2:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/compiler-engineering-structure/}{So
+%  how do you structure a compiler project?}
+%\item
+%  { Part 3:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/parsing-ocamllex-menhir/}{Writing
+%  a Lexer and Parser using OCamllex and Menhir}
+%\item
+%  { Part 4:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/intro-to-type-checking/}{An
+%  accessible introduction to type theory and implementing a
+%  type-checker}
+%\item
+%  { Part 5:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/data-race-dataflow-analysis/}{A
+%  tutorial on liveness and alias dataflow analysis}
+%\item
+%  { Part 6:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/lower-language-constructs-to-llvm/}{Desugaring
+%  - taking our high-level language and simplifying it!}
+%\item
+%  \textbf{Part 7: A Protobuf tutorial for OCaml and C++}
+%\item
+%  { Part 8:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/llvm-ir-cpp-api-tutorial/}{A
+%  Complete Guide to LLVM for Programming Language Creators}
+%\item
+%  { Part 9:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/concurrency-runtime-language-tutorial/}{Implementing
+%  Concurrency and our Runtime Library}
+%\item
+%  { Part 10:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/generics-parametric-polymorphism/}{Generics
+%  - adding polymorphism to Bolt}
+%\item
+%  { Part 11:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/inheritance-method-overriding-vtable/}{Adding
+%  Inheritance and Method Overriding to Our Language}
+%\end{itemize}
+%
+%\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+Now that we've desugared our language into a simple ``Bolt IR'' that is
+close to LLVM IR, we want to generate LLVM IR. One problem though, our
+Bolt IR is an OCaml value, but the LLVM API we're using is the native
+C++ API. We can't import the value directly into the C++ compiler
+backend, so we need to serialise it first into a
+\textbf{language-independent} data representation.
+
+Hey there! If you came across this tutorial from Google and don't care
+about compilers, don't worry! This tutorial doesn't really involve
+anything compiler-specific (it's just the illustrative example). If you
+care about OCaml then the first half will be up your street, and if
+you're here for C++ you can skip the OCaml section.
+
+\hypertarget{protocol-buffers-schema}{%
+\section{\texorpdfstring{\protect\hyperlink{protocol-buffers-schema}{}Protocol
+Buffers
+Schema}{Protocol Buffers Schema}}\label{protocol-buffers-schema}}
+
+Protocol buffers (aka \emph{protobuf} ) encodes your data as a series of
+binary messages according to a given \textbf{schema}. This schema
+(written in a \texttt{.proto} file) captures the structure of your data.
+
+Each message contains a number of fields.
+
+Fields are of the form \texttt{modifer\ type\ name\ =\ someIndex}
+
+Each of the fields have a modifier: \texttt{required} /
+\texttt{optional} / \texttt{repeated}. The \texttt{repeated} modifier
+corresponds to a list/vector of that field. e.g.
+\texttt{repeated\ PhoneNumber} represents a value of type
+\texttt{List\textless{}PhoneNumber\textgreater{}}.
+
+For example, the following schema would define a Person in a contact
+book. Each person has to have a name and id, and optionally could have
+an email address. They might have multiple phone numbers (hence
+\texttt{repeated\ PhoneNumber}), e.g. for their home, their mobile and
+work.
+
+%{example.proto}
+%
+%Copy
+
+\begin{verbatim}
+message Person {
+  required string name = 1;
+  required int32 id = 2;
+  optional string email = 3;
+  enum PhoneType {
+    MOBILE = 0; 
+   HOME = 1;
+    WORK = 2;
+  }
+  message PhoneNumber {
+    required string number = 1;
+    optional PhoneType type = 2 [default = HOME];
+  }
+  repeated PhoneNumber phones = 4;
+}
+\end{verbatim}
+
+Note here within the schema for a \texttt{Person} message, we also
+\textbf{number} the fields (\texttt{=1}, \texttt{=2}, \texttt{=3},
+\texttt{=4}). This allows us to add fields later without altering the
+existing ordering of fields (so you can continue to parse these fields
+without having to know about new fields).
+
+Every time we want to add a new ``type'' of field, we define a schema
+(just like how you might define a class to add a new type of object). We
+can even define a schema within another schema, e.g. within the schema
+for a \texttt{Person}, we defined the schema for the
+\texttt{PhoneNumber} field.
+
+We can also define the schema for an \textbf{enum} type
+\texttt{PhoneType}. This enum acted as a ``tag'' for our phone number.
+
+Now, just as you might want a field to be one of many options (specified
+by the enum type), you might want the message to contain exactly one of
+many fields.
+
+For example in our compiler we might want to encode an identifier as
+\emph{one of two options}. Here we don't want to store data in an index
+field if we've tagged it as a \texttt{Variable}.
+
+%{
+%\href{https://github.com/mukul-rathi/bolt/blob/master/src/frontend/ir_gen/frontend_ir.mli}{frontend\_ir.mli}}
+%
+%Copy
+
+\begin{lstlisting}[language=caml,caption={frontend\_ir.mli}]
+type identifier =
+    | Variable of string
+    | ObjField of string * index (* name and field index *)
+\end{lstlisting}
+
+In our protobuf, we can add fields for each of these options, and use
+the keyword \texttt{oneof} to specify that only one of the fields in
+that group will be set at once.
+
+Now, whilst this tells Protobuf that one of those values is set, we have
+no way of telling which one of them is set. So we can introduce a
+\texttt{tag} enum field, and query its value (\texttt{Variable} or
+\texttt{ObjField}) when deserialising the object.
+
+%Copy
+
+\begin{verbatim}
+message identifier {
+  enum _tag {
+    Variable_tag = 1;
+    ObjField_tag = 2;
+  }
+  message _ObjField {
+    required string objName = 1;
+    required int64 fieldIndex = 2;
+  }
+  required _tag tag = 1;
+  oneof value {
+    string Variable = 2;
+    _ObjField ObjField = 3;
+  }
+}
+\end{verbatim}
+
+Note since the constructor \texttt{Variable\ of\ string} has only one
+argument of type \texttt{string}, we can just set the type of that field
+to \texttt{string}. We equally could have defined a message
+\texttt{\_Variable} with schema:
+
+%Copy
+
+\begin{verbatim}
+message _Variable {
+    required string varName = 1;
+  }
+  ...
+  oneof value {
+    _Variable Variable = 2;
+    _ObjField ObjField = 3;
+  }
+\end{verbatim}
+
+\hypertarget{mapping-ocaml-type-definitions-to-protobuf-schema}{%
+\section{\texorpdfstring{\protect\hyperlink{mapping-ocaml-type-definitions-to-protobuf-schema}{}Mapping
+OCaml Type definitions to Protobuf
+Schema}{Mapping OCaml Type definitions to Protobuf Schema}}\label{mapping-ocaml-type-definitions-to-protobuf-schema}}
+
+Now we've looked at the \texttt{identifier} schema, let's flesh out the
+rest of the frontend ``Bolt IR'' schema.
+
+If you notice, whenever we have an OCaml variant type like
+\texttt{identifier} we have a straightforward formula to specify the
+corresponding schema. We:
+
+\begin{itemize}
+\tightlist
+\item
+  Add a tag field to specify the constructor the value has.
+\item
+  Define a message schema if a constructor has multiple arguments e.g
+  for \texttt{ObjField}. If the constructor has only one argument
+  (\texttt{Variable}) we don't need to.
+\item
+  Specify a \texttt{oneof} block containing the fields for each of the
+  constructors.
+\end{itemize}
+
+We could manually write out all of the schema, but we'd have to rewrite
+these every time our language changed. However we have a hidden weapon
+up our sleeve - a library that will do this for us!
+
+There's the
+\href{https://developers.google.com/protocol-buffers/docs/overview}{full
+Protobuf Schema Guide} if you want to learn more about other message
+types.
+
+\hypertarget{ppx-deriving-protobuf}{%
+\section{\texorpdfstring{\protect\hyperlink{ppx-deriving-protobuf}{}PPX
+Deriving Protobuf}{PPX Deriving Protobuf}}\label{ppx-deriving-protobuf}}
+
+OCaml allows libraries to extend its syntax using a \textbf{ppx} hook.
+The ppx libraries can preprocess the files using these hooks to extend
+the language functionality. So we can tag our files with other
+information, such as which types need to have a protobuf schema
+generated.
+
+We can update our Dune build file to preprocess our \texttt{ir\_gen}
+library with the ppx-deriving protobuf library:
+
+%{
+%\href{https://github.com/mukul-rathi/bolt/blob/master/src/frontend/ir_gen/dune}{dune}}
+%
+%Copy
+
+\begin{lstlisting}[caption={dune}]
+(library
+ (name ir_gen)
+ (public_name ir_gen)
+ (libraries core fmt desugaring ast)
+ (flags
+  (:standard -w -39))
+ (preprocess
+  (pps ppx_deriving_protobuf bisect_ppx --conditional))
+\end{lstlisting}
+
+Note the flags command suppresses warning 39 - ``unused \texttt{rec}
+flag'' - since the code the ppx\_deriving\_protobuf library generates
+raises a lot of those warnings. I would highly recommend that you also
+suppress these warnings!
+
+An aside, \texttt{bisect\_ppx} is the tool we use to calculate test
+coverage. It has a \texttt{-\/-conditional} flag since we don't want to
+preprocess the file with coverage info if we're not computing the test
+coverage.
+
+Telling PPX deriving protobuf that we want to serialise a type
+definition is easy - we just stick a \texttt{{[}@@deriving\ protobuf{]}}
+at the end of our type definition. For variant types, we have to specify
+a \texttt{{[}@key\ 1{]}}, \texttt{{[}@key\ 2{]}} for each of the
+variants.
+
+For example, for our \texttt{identifier} type definition in our
+\texttt{.mli} file:
+
+%{
+%\href{https://github.com/mukul-rathi/bolt/blob/master/src/frontend/ir_gen/frontend_ir.mli}{frontend\_ir.mli}}
+%
+%Copy
+
+\begin{lstlisting}[language=caml,caption={frontend\_ir.mli}]
+type identifier =
+  | Variable of string [@key 1]
+  | ObjField of string * int [@key 2]  [@@deriving protobuf]
+\end{lstlisting}
+
+We do the same thing in the \texttt{.ml} file, except we also specify
+the file to which we want to write the protobuf schema.
+
+
+
+\begin{lstlisting}[language=caml,caption={frontend\_ir.mli}]
+type identifier =
+  | Variable of string [@key 1]
+  | ObjField of string * int [@key 2][@@deriving protobuf {protoc= "../../frontend_ir.proto"}]
+\end{lstlisting}
+
+This path is relative to the src file \texttt{frontend\_ir.ml}. So since
+this \texttt{frontend\_ir.ml} file is in the
+\texttt{src/frontend/ir\_gen/} folder of the repo, the protobuf schema
+file will be written to \texttt{src/frontend\_ir.proto}. If you don't
+specify a file path to the \texttt{protoc} argument, then the
+\texttt{.proto} file will be written to the \texttt{\_build} folder.
+
+One extra tip, the ppx deriving protobuf library won't serialise lists
+of lists. For example you can't have:
+
+%Copy
+
+\begin{lstlisting}[language=caml]
+type something = Foo of foo list list [@key 1] [@@deriving protobuf])
+\end{lstlisting}
+
+This is because if we have a message schema for \texttt{foo}, then to
+get a field of type \texttt{foo\ list} is straightforward - we use
+\texttt{repeated\ foo} in our field schema. But we can't say
+\texttt{repeated\ repeated\ foo} to get a list of a list of type foo. So
+to get around this, you'd have to define another type here:
+
+%Copy
+
+\begin{lstlisting}[language=caml]
+type list_of_foo = foo list [@@deriving protobuf]
+(*note no @key since not a variant type *)
+type something = Foo of list_of_foo list [@key 1] [@@deriving protobuf]
+\end{lstlisting}
+
+Finally, to serialise our Bolt IR using this schema, PPX deriving
+protobuf provides us with
+\texttt{\textless{}type\_name\textgreater{}\_to\_protobuf} serialisation
+functions. We use this to get a binary protobuf message that we write to
+an output channel (\texttt{out\_chan}) as a sequence of bytes.
+
+%{
+%\href{https://github.com/mukul-rathi/bolt/blob/master/src/frontend/ir_gen/ir_gen_protobuf.ml}{ir\_gen\_protobuf.ml}}
+%
+%Copy
+
+\begin{lstlisting}[caption={ir\_gen\_protobuf.ml},language=caml]
+let ir_gen_protobuf program out_chan =
+    let protobuf_message = Protobuf.Encoder.encode_exn program_to_protobuf program in
+    output_bytes out_chan protobuf_message
+\end{lstlisting}
+
+In our overall Bolt compiler pipeline, I write the output to a
+\texttt{.ir} file if provided, or to \texttt{stdout}:
+
+%{
+%\href{https://github.com/mukul-rathi/bolt/blob/master/src/frontend/compile_program_ir.ml}{compile\_program\_ir.ml}}
+%
+%Copy
+
+\begin{lstlisting}[caption={{compile\_program\_ir.ml}},language=caml]
+...
+ match compile_out_file with
+    | Some file_name ->
+        Out_channel.with_file file_name ~f:(fun file_oc ->
+            ir_gen_protobuf program file_oc)
+    | None           -> ir_gen_protobuf program stdout )
+\end{lstlisting}
+
+\hypertarget{auto-generated-protobuf-schema}{%
+\section{\texorpdfstring{\protect\hyperlink{auto-generated-protobuf-schema}{}Auto-generated
+Protobuf
+Schema}{Auto-generated Protobuf Schema}}\label{auto-generated-protobuf-schema}}
+
+The \href{https://github.com/ocaml-ppx/ppx_deriving_protobuf}{README} of
+the repository for the PPX Deriving Library has a thorough explanation
+of the mapping. We've already gone through an example of the
+autogenerated schema, so the schema shouldn't be too unfamiliar. There
+was a slight modification I made though. For
+(\texttt{ObjField\ of\ string\ *\ int}) I said the generated output was:
+
+%Copy
+
+\begin{verbatim}
+message _ObjField {
+    required string objName = 1;
+    required int64 fieldIndex = 2;
+  }
+\end{verbatim}
+
+This is unfortunately not quite true. I put in the objName and
+fieldIndex for clarity, but the library doesn't know what the semantic
+meaning of \texttt{string\ *\ int} is, so instead it looks like:
+
+%Copy
+
+\begin{verbatim}
+message _ObjField {
+    required string _0 = 1;
+    required int64 _1 = 2;
+  }
+\end{verbatim}
+
+That's the downside of the autogenerated schema. You get the generic
+field names \texttt{\_0}, \texttt{\_1}, \texttt{\_2} and so on instead
+of \texttt{objName} and \texttt{fieldIndex}. And for
+\texttt{type\ block\_expr\ =\ expr\ list}, you get the field name
+\texttt{\_}:
+
+%Copy
+
+\begin{verbatim}
+message block_expr {  repeated expr _ = 1;}
+\end{verbatim}
+
+\hypertarget{decoding-protobuf-in-c}{%
+\section{\texorpdfstring{\protect\hyperlink{decoding-protobuf-in-c}{}Decoding
+Protobuf in
+C++}{Decoding Protobuf in C++}}\label{decoding-protobuf-in-c}}
+
+Alright, so far we've looked at Protobuf schema definitions and how PPX
+Deriving Protobuf encodes messages and generates the schema. Now we need
+to decode it using C++. As with the encoding section, we don't need to
+know the details of how Protobuf represents our messages in binary.
+
+\hypertarget{generating-protobuf-deserialisation-files}{%
+\section{\texorpdfstring{\protect\hyperlink{generating-protobuf-deserialisation-files}{}Generating
+Protobuf Deserialisation
+Files}{Generating Protobuf Deserialisation Files}}\label{generating-protobuf-deserialisation-files}}
+
+The \texttt{protoc} compiler automatically generates classes and
+function definitions from the \texttt{.proto} file: this is exposed in
+the \texttt{.pb.h} header file. For \texttt{frontend\_ir.proto}, the
+corresponding header file is \texttt{frontend\_ir.pb.h}.
+
+For Bolt, we're building the C++ compiler backend with the build system
+Bazel. Rather than manually running the \texttt{protoc} compiler to get
+our \texttt{.pb.h} header file and then linking in all the other
+generated files, we can instead take advantage of Bazel's integration
+with \texttt{protoc} and get Bazel to run \texttt{protoc} during the
+build process for us and link it in.
+
+The Bazel build system works with many languages e.g. Java, Dart,
+Python, not just C++. So we specify two libraries - a
+language-independent \texttt{proto\_library}, and then a specific C++
+library (\texttt{cc\_proto}) that wraps around that library:
+
+%{
+%\href{https://github.com/mukul-rathi/bolt/blob/master/src/BUILD}{BUILD}}
+%
+%Copy
+
+\begin{verbatim}
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Convention:
+# A cc_proto_library that wraps a proto_library named foo_proto
+# should be called foo_cc_proto.
+cc_proto_library(
+    name = "frontend_ir_cc_proto",
+    deps = [":frontend_ir_proto"],
+    visibility = ["//src/llvm-backend/deserialise_ir:__pkg__"],
+
+)
+
+# Conventions:
+# 1. One proto_library rule per .proto file.
+# 2. A file named foo.proto will be in a rule named foo_proto.
+proto_library(
+    name = "frontend_ir_proto",
+    srcs = ["frontend_ir.proto"],
+)
+\end{verbatim}
+
+We include the \texttt{cc\_proto\_library(...)} as a build dependency to
+whatever files that need to use the \texttt{.pb.h} file, and Bazel will
+compile the protobuf file for us. In our case, this is our
+\texttt{deserialise\_ir} library.
+
+%{
+%\href{https://github.com/mukul-rathi/bolt/blob/master/src/llvm-backend/deserialise_ir/BUILD}{BUILD}}
+%
+%Copy
+
+\begin{lstlisting}
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(
+    name = "deserialise_ir",
+    srcs =  glob(["*.cc"]),
+    hdrs = glob(["*.h"]),
+    visibility = ["//src/llvm-backend:__pkg__", "//src/llvm-backend/llvm_ir_codegen:__pkg__", "//tests/llvm-backend/deserialise_ir:__pkg__"],
+    deps = ["//src:frontend_ir_cc_proto", "@llvm"]
+)
+\end{lstlisting}
+
+\hypertarget{deserialising-a-protobuf-serialised-file}{%
+\section{\texorpdfstring{\protect\hyperlink{deserialising-a-protobuf-serialised-file}{}Deserialising
+a Protobuf serialised
+file}{Deserialising a Protobuf serialised file}}\label{deserialising-a-protobuf-serialised-file}}
+
+The \texttt{frontend\_ir.pb.h} file defines a namespace
+\texttt{Frontend\_ir}, with each message mapping to a class. So for our
+Bolt program, represented by the \texttt{program} message in our
+\texttt{frontend\_ir.proto} file, the corresponding Protobuf class is
+\texttt{Frontend\_ir::program}.
+
+To deserialise a message of a given type, we create an object of the
+corresponding class. We then call the \texttt{ParseFromIstream} method
+which deserialises the message from the input stream and stores it in
+the object. This method returns a boolean value indicating
+success/failure. We've defined our own custom
+\texttt{DeserialiseProtobufException} to handle failure:
+
+%{
+%\href{https://github.com/mukul-rathi/bolt/blob/master/src/llvm-backend/deserialise_ir/deserialise_protobuf.cc}{deserialise\_protobuf.cc}}
+%
+%Copy
+
+\begin{lstlisting}[language=C++,caption={deserialise\_protobuf.cc}]
+Frontend_ir::program deserialiseProtobufFile(std::string &filePath) {
+  Frontend_ir::program program;
+  std::fstream fileIn(filePath, std::ios::in | std::ios::binary);
+  ...
+  if (!program.ParseFromIstream(&fileIn)) {
+    throw DeserialiseProtobufException("Protobuf not deserialised from file.");
+  }
+  return program;
+}
+\end{lstlisting}
+
+So we're done!
+
+Well, one caveat\ldots{} this autogenerated class is a \textbf{dumb data
+placeholder}. We need to read the data out from the \texttt{program}
+object.
+
+\hypertarget{reading-out-protobuf-data-from-a-protobuf-class}{%
+\section{\texorpdfstring{\protect\hyperlink{reading-out-protobuf-data-from-a-protobuf-class}{}Reading
+out Protobuf data from a protobuf
+class}{Reading out Protobuf data from a protobuf class}}\label{reading-out-protobuf-data-from-a-protobuf-class}}
+
+If you try to read the protoc-generated file \texttt{frontend\_ir.pb.h},
+you'll realise it's a garguantuan monstrosity, which is not nearly as
+nice as the
+\href{https://developers.google.com/protocol-buffers/docs/cpptutorial}{standard
+example in the official tutorial}. So instead of trying to read the
+methods from the file, here is an explanation of the structure of the
+header file.
+
+TIP: Make sure you have code-completion set-up in your IDE - it means
+you won't need to manually search through \texttt{frontend\_ir.pb.h} for
+the right methods.
+
+We'll be deserialising messages using the schema defined below:
+
+%{
+%\href{https://github.com/mukul-rathi/bolt/blob/master/src/frontend_ir.proto}{frontend\_ir.proto}}
+%
+%Copy
+
+\begin{lstlisting}[caption={frontend\_ir.proto}]
+package Frontend_ir;
+
+message expr {
+  enum _tag {
+    Integer_tag = 1;
+    Boolean_tag = 2;
+    Identifier_tag = 3;
+    ...
+    IfElse_tag = 11;
+    WhileLoop_tag = 12;
+    Block_tag = 15;
+  }
+  message _Identifier {
+    required identifier _0 = 1;
+    optional lock_type _1 = 2;
+  }
+  ...
+  message _IfElse {
+    required expr _0 = 1;
+    required block_expr _1 = 2;
+    required block_expr _2 = 3;
+  }
+  message _WhileLoop {
+    required expr _0 = 1;
+    required block_expr _1 = 2;
+  }
+  ...
+  required _tag tag = 1;
+  oneof value {
+    int64 Integer = 2;
+    bool Boolean = 3;
+    _Identifier Identifier = 4;
+    ...
+    _IfElse IfElse = 12;
+    _WhileLoop WhileLoop = 13;
+    block_expr Block = 16;
+    ...
+  }
+}
+
+message block_expr {
+  repeated expr _ = 1;
+}
+\end{lstlisting}
+
+\hypertarget{protobuf-message-classes-and-enums}{%
+\paragraph{\texorpdfstring{\protect\hyperlink{protobuf-message-classes-and-enums}{}Protobuf
+message classes and
+enums}{Protobuf message classes and enums}}\label{protobuf-message-classes-and-enums}}
+
+Each Protobuf message definition maps to a class definition. Protobuf
+enums map to C++ enums. To give each class/enum a globally unique name,
+they are prepended by the package name (\texttt{Frontend\_ir}) and any
+classes they're nested in.
+
+So message \texttt{expr} corresponds to class
+\texttt{Frontend\_ir\_expr}, and enum \texttt{\_tag} which is nested
+within message \texttt{expr} maps to \texttt{Frontend\_ir\_expr\_\_tag}.
+
+In the repo, the \texttt{bin\_op} message also has a nested
+\texttt{\_tag} enum, and this maps to
+\texttt{Frontend\_ir\_bin\_op\_\_tag} (note how this namespacing means
+it doesn't clash with the \texttt{\_tag} definition in the \texttt{expr}
+message).
+
+This holds for arbitrary levels of nesting, e.g. the nested message
+\texttt{\_IfElse} in the \texttt{expr} message maps to the class
+\texttt{Frontend\_ir\_expr\_\_IfElse}.
+
+Specific enum values for the enum \texttt{\_tag} e.g.
+\texttt{Integer\_tag} can be referred to as
+\texttt{Frontend\_ir\_expr\_\_tag\_Integer\_tag}.
+
+Rather than writing classes\textbackslash enums by concatenating the
+package and class names with \texttt{\_}, Protobuf also has a nested
+class type alias, so you can write these nested message classes as
+\texttt{Frontend\_ir::expr} and \texttt{Frontend\_ir::expr::\_IfElse}.
+
+\hypertarget{accessing-specific-protobuf-fields}{%
+\paragraph{\texorpdfstring{\protect\hyperlink{accessing-specific-protobuf-fields}{}Accessing
+Specific Protobuf
+Fields}{Accessing Specific Protobuf Fields}}\label{accessing-specific-protobuf-fields}}
+
+Each protobuf \emph{required} field \texttt{field\_name} has a
+corresponding accessor method \texttt{field\_name()} (where the field
+name is converted to lower-case). So the field \texttt{tag} in the
+\texttt{expr} message would map to the method \texttt{tag()} in the
+\texttt{Frontend\_ir::expr} class, and the field \texttt{Integer} would
+map to the method \texttt{integer()}, \texttt{IfElse} to
+\texttt{ifelse()} etc.
+
+NB: to reiterate, don't get confused between the field name e.g
+\texttt{IfElse} and the type of the field \texttt{\_IfElse} in the
+Protobuf message (note the prepended underscore). This is only because
+the OCaml PPX deriving protobuf library gave them those names - we could
+have chosen less confusing names if we were writing this proto schema
+manually.
+
+For \emph{optional} fields, we can access the fields in the same way,
+but we also have a \texttt{has\_field\_name()} boolean function to check
+if a field is there.
+
+For \emph{repeated} fields, we instead have a
+\texttt{field\_name\_size()} function to query the number of items, and
+we can access item i using the \texttt{field\_name(i)} method. So for a
+field name \texttt{\_1} the corresponding methods are
+\texttt{\_1\_size()} and \texttt{\_1(i)}. For field name \texttt{\_} in
+the autogenerated schema, the methods would correspondingly be
+\texttt{\_\_size()} and \texttt{\_(i)}.
+
+\hypertarget{sanitising-our-frontend-ir}{%
+\section{\texorpdfstring{\protect\hyperlink{sanitising-our-frontend-ir}{}Sanitising
+our Frontend
+IR}{Sanitising our Frontend IR}}\label{sanitising-our-frontend-ir}}
+
+Let's put this in practice by sanitising our protobuf classes into C++
+classes directly mapping our OCaml type definitions. Each of the OCaml
+\texttt{expr} variants maps to a subclass of an abstract \texttt{ExprIR}
+class.
+
+%Copy
+
+\begin{lstlisting}[language=C++]
+struct ExprIR {
+  virtual ~ExprIR() = default;
+  ...
+};
+
+struct ExprIfElseIR : public ExprIR {
+  std::unique_ptr<ExprIR> condExpr;
+  std::vector<std::unique_ptr<ExprIR>> thenBlock;
+  std::vector<std::unique_ptr<ExprIR>> elseBlock;
+  ExprIfElseIR(const Frontend_ir::expr::_IfElse &expr);
+  ...
+};
+struct ExprWhileLoopIR : public ExprIR {
+  std::unique_ptr<ExprIR> condExpr;
+  std::vector<std::unique_ptr<ExprIR>> loopExpr;
+  ExprWhileLoopIR(const Frontend_ir::expr::_WhileLoop &expr);
+  ...
+};
+...
+\end{lstlisting}
+
+I use \texttt{std::unique\_ptr} all over the compiler backend to avoid
+explicitly managing memory. You can use standard pointers too - this is
+just a personal preference!
+
+Remember how we had a specific \texttt{tag} field to distinguish between
+variants of the \texttt{expr} type. We have a \texttt{switch} statement
+on the value of the \texttt{tag} field. This \texttt{tag} tells us which
+of the \texttt{oneof\{\}} fields is set. We then access the
+correspondingly set field e.g. \texttt{expr.ifelse()} for the
+\texttt{IfElse\_tag} case:
+
+%{
+%\href{https://github.com/mukul-rathi/bolt/blob/master/src/llvm-backend/deserialise_ir/expr_ir.cc}{expr\_ir.cc}}
+%
+%Copy
+
+\begin{lstlisting}[caption={expr\_ir.cc},language=C++]
+std::unique_ptr<ExprIR> deserialiseExpr(const Frontend_ir::expr &expr){
+  switch (expr.tag()) {
+    case Frontend_ir::expr__tag_IfElse_tag:
+      return std::unique_ptr<ExprIR>(new ExprIfElseIR(expr.ifelse()));
+    case Frontend_ir::expr__tag_WhileLoop_tag:
+      return std::unique_ptr<ExprIR>(new ExprWhileLoopIR(expr.whileloop()));
+    ...
+  }
+}
+\end{lstlisting}
+
+Looking at the message schema for the \texttt{\_IfElse} and
+\texttt{block\_expr} messages:
+
+%{
+%\href{https://github.com/mukul-rathi/bolt/blob/master/src/frontend_ir.proto}{frontend\_ir.proto}}
+%
+%Copy
+
+\begin{lstlisting}[caption={frontend\_ir.proto}]
+message _IfElse {
+    required expr _0 = 1;
+    required block_expr _1 = 2;
+    required block_expr _2 = 3;
+  }
+  message block_expr {
+  repeated expr _ = 1;
+}
+\end{lstlisting}
+
+Our constructor reads each of the \texttt{\_IfElse} message's fields in
+turn. We can then use our \texttt{deserialiseExpr} to directly
+deserialise the \texttt{\_0} field. However, because the message
+\texttt{block\_expr} has a repeated field \texttt{\_}, we have to
+iterate through the list of expr messages in that field in a for loop:
+
+%{
+%\href{https://github.com/mukul-rathi/bolt/blob/master/src/llvm-backend/deserialise_ir/expr_ir.cc}{expr\_ir.cc}}
+%
+%Copy
+
+\begin{lstlisting}[language=C++,caption={expr\_ir.cc}]
+ExprIfElseIR::ExprIfElseIR(const Frontend_ir::expr::_IfElse &expr) {
+  Frontend_ir::expr condMsg = expr._0();
+  Frontend_ir::block_expr thenBlockMsg = expr._1();
+  Frontend_ir::block_expr elseBlockMsg = expr._2();
+
+  condExpr = deserialiseExpr(condMsg);
+  for (int i = 0; i < thenBlockMsg.__size(); i++) {
+    thenExpr.push_back(deserialiseExpr(thenBlockMsg._(i)));
+  }
+  for (int i = 0; i < elseBlockMsg.__size(); i++) {
+    elseExpr.push_back(deserialiseExpr(elseBlockMsg._(i)));
+  }
+}
+\end{lstlisting}
+
+The rest of the deserialisation code for the Bolt schema follows the
+same pattern.
+
+\hypertarget{wrap-up}{%
+\section{\texorpdfstring{\protect\hyperlink{wrap-up}{}Wrap
+up}{Wrap up}}\label{wrap-up}}
+
+In this post we've converted from our OCaml frontend IR to the
+equivalent C++ classes. We'll use these C++ classes to generate LLVM IR
+code in the next part of the tutorial.
+
+%\hypertarget{share-this-on-twitter}{%
+%\section{Share This On Twitter}\label{share-this-on-twitter}}
+%
+%If you liked this post, please consider sharing it with your network. If
+%you have any questions, tweet away and I'll answer :) I also tweet when
+%new posts drop!
+%
+%\textbf{PS:} I also share helpful tips and links as I'm learning - so
+%you get them \textbf{well before} they make their way into a post!
+%
+%\hypertarget{series-creating-the-bolt-compiler-1}{%
+%\section{Series: Creating the Bolt
+%Compiler}\label{series-creating-the-bolt-compiler-1}}
+%
+%\begin{itemize}
+%\item
+%  { Part 1:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/intro-to-compiler/}{How
+%  I wrote my own "proper" programming language}
+%\item
+%  { Part 2:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/compiler-engineering-structure/}{So
+%  how do you structure a compiler project?}
+%\item
+%  { Part 3:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/parsing-ocamllex-menhir/}{Writing
+%  a Lexer and Parser using OCamllex and Menhir}
+%\item
+%  { Part 4:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/intro-to-type-checking/}{An
+%  accessible introduction to type theory and implementing a
+%  type-checker}
+%\item
+%  { Part 5:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/data-race-dataflow-analysis/}{A
+%  tutorial on liveness and alias dataflow analysis}
+%\item
+%  { Part 6:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/lower-language-constructs-to-llvm/}{Desugaring
+%  - taking our high-level language and simplifying it!}
+%\item
+%  \textbf{Part 7: A Protobuf tutorial for OCaml and C++}
+%\item
+%  { Part 8:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/llvm-ir-cpp-api-tutorial/}{A
+%  Complete Guide to LLVM for Programming Language Creators}
+%\item
+%  { Part 9:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/concurrency-runtime-language-tutorial/}{Implementing
+%  Concurrency and our Runtime Library}
+%\item
+%  { Part 10:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/generics-parametric-polymorphism/}{Generics
+%  - adding polymorphism to Bolt}
+%\item
+%  { Part 11:
+%  }\href{https://mukulrathi.com/create-your-own-programming-language/inheritance-method-overriding-vtable/}{Adding
+%  Inheritance and Method Overriding to Our Language}
+%\end{itemize}
+%
+%\begin{itemize}
+%\item ~
+%  \hypertarget{desugaring---taking-our-high-level-language-and-simplifying-it}{%
+%  \section{\texorpdfstring{\href{https://mukulrathi.com/create-your-own-programming-language/lower-language-constructs-to-llvm/}{←
+%  Desugaring - taking our high-level language and simplifying
+%  it!}}{← Desugaring - taking our high-level language and simplifying it!}}\label{desugaring---taking-our-high-level-language-and-simplifying-it}}
+%\item ~
+%  \hypertarget{tips-to-convert-your-internship-to-a-full-time-offer}{%
+%  \section{\texorpdfstring{\href{https://mukulrathi.com/facebook-internship-advice/}{17
+%  Tips to Convert Your Internship to a Full-time Offer!
+%  →}}{17 Tips to Convert Your Internship to a Full-time Offer! →}}\label{tips-to-convert-your-internship-to-a-full-time-offer}}
+%\end{itemize}
+%
+%\hypertarget{table-of-contents}{%
+%\section{Table of Contents}\label{table-of-contents}}
+%
+%\href{https://mukulrathi.com/create-your-own-programming-language/protobuf-ocaml-cpp-tutorial/\#top-of-page}{}
+%
+%\hypertarget{a-protobuf-tutorial-for-ocaml-and-c}{%
+%\section{A Protobuf tutorial for OCaml and
+%C++}\label{a-protobuf-tutorial-for-ocaml-and-c}}
+%
+%\begin{itemize}
+%\item
+%  \href{https://mukulrathi.com/create-your-own-programming-language/protobuf-ocaml-cpp-tutorial/\#protocol-buffers-schema}{}
+%
+%  \hypertarget{protocol-buffers-schema-1}{%
+%  \section{Protocol Buffers
+%  Schema}\label{protocol-buffers-schema-1}}
+%\item
+%  \href{https://mukulrathi.com/create-your-own-programming-language/protobuf-ocaml-cpp-tutorial/\#mapping-ocaml-type-definitions-to-protobuf-schema}{}
+%
+%  \hypertarget{mapping-ocaml-type-definitions-to-protobuf-schema-1}{%
+%  \section{Mapping OCaml Type definitions to Protobuf
+%  Schema}\label{mapping-ocaml-type-definitions-to-protobuf-schema-1}}
+%
+%  \begin{itemize}
+%  \item
+%    \href{https://mukulrathi.com/create-your-own-programming-language/protobuf-ocaml-cpp-tutorial/\#ppx-deriving-protobuf}{}
+%
+%    \hypertarget{ppx-deriving-protobuf-1}{%
+%    \section{PPX Deriving
+%    Protobuf}\label{ppx-deriving-protobuf-1}}
+%  \item
+%    \href{https://mukulrathi.com/create-your-own-programming-language/protobuf-ocaml-cpp-tutorial/\#auto-generated-protobuf-schema}{}
+%
+%    \hypertarget{auto-generated-protobuf-schema-1}{%
+%    \section{Auto-generated Protobuf
+%    Schema}\label{auto-generated-protobuf-schema-1}}
+%  \end{itemize}
+%\item
+%  \href{https://mukulrathi.com/create-your-own-programming-language/protobuf-ocaml-cpp-tutorial/\#decoding-protobuf-in-c}{}
+%
+%  \hypertarget{decoding-protobuf-in-c-1}{%
+%  \section{Decoding Protobuf in
+%  C++}\label{decoding-protobuf-in-c-1}}
+%
+%  \begin{itemize}
+%  \item
+%    \href{https://mukulrathi.com/create-your-own-programming-language/protobuf-ocaml-cpp-tutorial/\#generating-protobuf-deserialisation-files}{}
+%
+%    \hypertarget{generating-protobuf-deserialisation-files-1}{%
+%    \section{Generating Protobuf Deserialisation
+%    Files}\label{generating-protobuf-deserialisation-files-1}}
+%  \item
+%    \href{https://mukulrathi.com/create-your-own-programming-language/protobuf-ocaml-cpp-tutorial/\#deserialising-a-protobuf-serialised-file}{}
+%
+%    \hypertarget{deserialising-a-protobuf-serialised-file-1}{%
+%    \section{Deserialising a Protobuf serialised
+%    file}\label{deserialising-a-protobuf-serialised-file-1}}
+%  \item
+%    \href{https://mukulrathi.com/create-your-own-programming-language/protobuf-ocaml-cpp-tutorial/\#reading-out-protobuf-data-from-a-protobuf-class}{}
+%
+%    \hypertarget{reading-out-protobuf-data-from-a-protobuf-class-1}{%
+%    \section{Reading out Protobuf data from a protobuf
+%    class}\label{reading-out-protobuf-data-from-a-protobuf-class-1}}
+%  \item
+%    \href{https://mukulrathi.com/create-your-own-programming-language/protobuf-ocaml-cpp-tutorial/\#sanitising-our-frontend-ir}{}
+%
+%    \hypertarget{sanitising-our-frontend-ir-1}{%
+%    \section{Sanitising our Frontend
+%    IR}\label{sanitising-our-frontend-ir-1}}
+%  \end{itemize}
+%\item
+%  \href{https://mukulrathi.com/create-your-own-programming-language/protobuf-ocaml-cpp-tutorial/\#wrap-up}{}
+%
+%  \hypertarget{wrap-up-1}{%
+%  \section{Wrap up}\label{wrap-up-1}}
+%\end{itemize}
+%
+%© Mukul Rathi 2023
+%
+%\hypertarget{gatsby-announcer}{}
+%Navigated to A Protobuf tutorial for OCaml and C++
