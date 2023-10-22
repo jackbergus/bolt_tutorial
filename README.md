@@ -5,15 +5,15 @@
 
 ## What, another programming language?
 
-Yep, this one prevents data races! Concurrent code is hard to get right, so let the language take care of it for you! The best part is that you get **more fine-grained concurrency** than Rust and this language doesn't get in the way when you want to write single-threaded code. Want to write Rusty ownership-style code - yep, you can do that in Bolt too!
+Yep, this one prevents data races! Concurrent code is hard to get right, so let the language care for you! The best part is that you get **more fine-grained concurrency** than Rust and this language doesn't get in the way when you want to write single-threaded code. Want to write Rusty ownership-style code - yep, you can do that in Bolt, too!
 
-For a description of the theory, check out the [accompanying dissertation](https://github.com/mukul-rathi/bolt-dissertation).
+For a theory description, check out the [accompanying dissertation](https://github.com/jackbergus/bolt_tutorial/blob/master/tex/dissertation.pdf).
 
 ## Alright so what does this language do?
 
-You can already write a lot of Java-esque code - see `examples/` in this repo. Bolt already supports inheritance, method overloading and overriding, and generics. Is Bolt missing something? Comment on [this issue](https://github.com/mukul-rathi/bolt/issues/134) - I'm all ears.
+You can already write many Java-esque code - see `examples/` in this repo. Bolt already supports inheritance, method overloading and overriding, and generics. Is Bolt missing something? Comment on [this issue](https://github.com/mukul-rathi/bolt/issues/134) - I'm all ears.
 
-Two ways Bolt differs from traditional languages - the capability annotations for fields and function/method type signatures, and a _structured_ approach to concurrency - so you know exactly how long your threads live for:
+Two ways Bolt differs from traditional languages - the capability annotations for fields and function/method type signatures and a _structured_ approach to concurrency - so you know exactly how long your threads live for:
 
 ```
 finish{
@@ -27,7 +27,7 @@ finish{
 
 ## Wait, how did you build this?
 
-A lot of trial-and-error and experimenting with reverse-engineering C++ code! I'll save you the trouble - step-by-step tutorials for how I built this all are incoming - I'll tweet about them when they drop so [follow me on Twitter](https://twitter.com/mukulrathi_). **Update: [all the posts are live](https://mukulrathi.com/create-your-own-programming-language/intro-to-compiler/)**.
+A lot of trial-and-error and experimenting with reverse-engineering C++ code! I'll save you the trouble - step-by-step tutorials for how I built this all are incoming - I'll tweet about them when they drop so [follow me on Twitter](https://twitter.com/mukulrathi_). **Update: [all the posts are live](https://github.com/jackbergus/bolt_tutorial/blob/master/tex/blog.pdf)**.
 
 Unlike your run-of-the-mill compiler tutorials, we'll be talking about more advanced language features too, like generics, inheritance, method overloading and overriding!
 
